@@ -1,0 +1,216 @@
+---
+title: "Biased estimates in simulation scenarios"
+author: Yuan-Ling Liaw and Waldir Leoncio
+header-includes:
+    - \usepackage{setspace}\onehalfspacing
+output:
+  html_document:
+    toc: true
+    highlight: tango
+---
+
+```{r setup, include = FALSE, warning = FALSE}
+library(knitr)
+library(kableExtra)
+library(formatR)
+knitr::opts_chunk$set(echo = TRUE)
+options(width = 90, tidy = TRUE, warning = FALSE, message = FALSE)
+opts_chunk$set(comment = "", warning = FALSE, message = FALSE,
+               echo = TRUE, tidy = TRUE, size = "small")
+```
+
+Version 2.0.0 of the R package lsasim comes with new, interesting features for researchers working with background questionnaires. Of particular interest for this blog post is the ability to calculate the theoretical linear regression coefficients for the expectation of the latent trait $\theta$ on the answers to the $Q$ background questionnaire items. Mathematically, given the equation
+$$
+E(\theta | Q) = \beta_0 + \sum_{i = 1}^q \beta_i Q_i,
+$$
+we're interested in calculating $\beta = \{\beta_1, \ldots, \beta_Q\}$. This is done directly by the function `beta_gen` or, indirectly, by calling `questionnaire_gen` with the arguments `theta = TRUE`, `full_output = TRUE`, and `family = "gaussian"`.
+
+Since `questionnaire_gen` generates sample data from theoretical parameters such as the covariance matrix between $\theta$ and $Q$, estimates for $\beta$ can be calculated directly by applying linear regression---e.g. using the `lm` function available in base R---in the generated data. As a matter of fact, `beta_gen` uses this same covariance matrix to calculate the theoretical $\beta$. If cognitive responses are also available for those same students who wrote the background questionnaire, they can also be used by an IRT package such as TAM or mirt to estimate $\beta$.
+
+An interesting exercise would be to check if those estimates for the regression coefficients match the parameters calculated by `beta_gen`. In order to reduce sample variability and get estimates which are as close as reasonably possible to the true values, one sample might not be enough, and a more complex simulation study must be setup. Then again, simply performing one experiment over and over is no guarantee that we will reach the expected results. In this post, we will show you how one apparently innocuous design decision can greatly affect the results.
+
+# Simulation setup 1
+
+Let a population of infinite size---in statistical terms---out of which an unbiased sample of students is drawn. In the figure below, the population is contained within the black circumference on the left, and two independent student samples are represented by the blue and red circles.
+
+![](figure/ex1.jpg)
+
+The sampled students are then subjected to a background questionnaire and a cognitive questionnaire; their responses are graded and Item Response Theory---namely the TAM package---is used to estimate $\theta$ and $\beta$ from the cognitive responses.
+
+```{r loading gendat3, echo = FALSE}
+path <- "C:\\Users\\lindaliaw\\Google Drive\\FINNUT Research\\R Package Development\\testing_v5\\data\\gendat3"
+tt <- 1; load(file = paste0(path, "\\test", tt, ".RData")); test1 <- test
+tt <- 4; load(file = paste0(path, "\\test", tt, ".RData")); test4 <- test
+```
+
+```{r testing gendat3_1, echo = FALSE}
+test <- test1
+desc1_mean <- apply(test[[8]][ c(2: (2+test[[1]]$X ))], 2, mean)
+desc2_sd <- apply(test[[8]][ (2+test[[1]]$X + 1 ): (2+test[[1]]$X*2 + 1) ], 2, mean)
+desc <- data.frame(names(test[[3]]$betas[1: (1 + test[[1]]$X)] ), round(desc1_mean, 4), round(desc2_sd, 4))
+desc <- cbind(test[[1]]$N, desc)
+colnames(desc) <- c("N", "Variable", "Mean",  "SD"); row.names(desc) <- NULL
+desc_t1 <- desc
+```
+
+```{r testing gendat 3_4, echo = FALSE}
+test <- test4
+desc1_mean <- apply(test[[8]][ c(2: (2+test[[1]]$X ))], 2, mean)
+desc2_sd <- apply(test[[8]][ (2+test[[1]]$X + 1 ): (2+test[[1]]$X*2 + 1) ], 2, mean)
+desc <- data.frame(names(test[[3]]$betas[1: (1 + test[[1]]$X)] ), round(desc1_mean, 4), round(desc2_sd, 4))
+desc <- cbind(test[[1]]$N, desc)
+colnames(desc) <- c("N", "Variable", "Mean",  "SD"); row.names(desc) <- NULL
+desc_t4 <- desc
+```
+Next, we administer another cognitive questionnaire to this same group of students. This seems to make sense at first, since the cognitive questionnaire is the only one being used by TAM to calculate the regression coefficients, and the student sample is an unbiased sample anyway. So a new cognitive questionnaire is administered, the answers are once again scored and $\hat\beta$ are once again estimated. This procedure of administering a new cognitive questionnaire is repeated a total of 1 000 times; those 1 000 estimates of $\beta$ are then compared with the true value. For starters, summary statistics for $\hat\beta$ in this setup are given in the tables below, which differ by the sample size (the table at the top results from a sample of 1 000 students; the one at the bottom results from a sample of 10 000).
+
+```{r tables gendat3, echo = FALSE, warning = F}
+knitr::kable(desc_t1, format="html", booktabs = T, escape = F,
+             align=c(rep('c',times = ncol(desc)))) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+knitr::kable(desc_t4, format="html", booktabs = T, escape = F,
+             align=c(rep('c',times = ncol(desc)))) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+
+```
+
+Individual estimates from those 1 000 replications of the cognitive questionnaires applied to the 1 000-strong student sample and the other one with 10 000 students can be seen in the figures below. The central red line corresponds to the true $\beta$ provided by `beta_gen`.
+
+```{r fig1, echo = FALSE, dpi=300, fig.height = 6, fig.width = 20}
+dat <- list(test1, test4)
+par(mfrow=c(1,2))
+
+for ( pp in 1 : 3) {
+  for ( dd in 1:2) {
+    test <- dat[[dd]]
+    true_beta <- test[[3]]$betas[[pp]]
+    ## results from TAM
+    plot ( x = 1: test[[1]]$reps, y = test[[5]][, pp],
+           ylim = c(true_beta - .1, true_beta + .1),
+           xlab = "replication", ylab = "estimated coef",
+           main = paste0("TAM:", names(test[[3]]$betas)[pp], "- N = ", test[[1]]$N),
+           pch = 20, cex.lab = 2, cex.main = 2, cex.axis = 2)
+    abline( h = true_beta, col = "red", lwd = 3)
+  }
+}
+```
+
+Something doesn't seem right. If we are dealing with unbiased samples, $\hat\beta$ should generally be hovering around $\beta$, but that does not seem to be the case, at least not for all the coefficients. What could be wrong? Perhaps the sample sizes are not large enough? Well, even samples of a few hundred observations are often large enough to achieve sufficient convergence and evidence of unbiasedness, so the idea of bias from a sample of 10 000---see the figure for q1 and N=10000 for the clearest picture---being not systematic but sample-derived feels rather far-fetched.
+
+Not to rely on visual inspection alone, let us examine the tables below, which compare $\beta$ with the estimates $\hat\beta$, the standard deviations of $\hat\beta$ and bias, absolute bias and Root Mean Squared Error. The values may seem low enough to convince some analysts that there is actually no bias in our estimates, but the offsets seen in the images above just seem too systematic to be left alone. So what could be wrong with setup 1?
+
+```{r biasTableTest1, echo = FALSE}
+test <- test1
+res <- cbind( test[[1]]$N, test[[7]][,1], round(test[[7]][,2:7], 5))
+colnames(res) <- c("N", "Variable", "True beta", "Est beta", "SD", "Bias", "ASB", "RMSE")
+row.names(res) <- NULL
+knitr::kable(res, format="html", booktabs = T, escape = F,
+             align=c(rep('c',times = ncol(res)))) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+```{r biasTableTest4, echo = FALSE}
+test <- test4
+res <- cbind( test[[1]]$N, test[[7]][,1], round(test[[7]][,2:7], 5))
+colnames(res) <- c("N", "Variable", "True beta", "Est beta", "SD", "Bias", "ASB", "RMSE")
+row.names(res) <- NULL
+knitr::kable(res, format="html", booktabs = T, escape = F,
+             align=c(rep('c',times = ncol(res)))) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+# The issue with simulation setup 1
+
+This first simulation setup relies on the convenience of sampling the population only once for the background questionnaire. Even if it is an unbiased sample from the population, it is a finite population with different parameters. For example, even if the population has $\theta \sim N(0, 1)$, a finite sample will have $\theta \sim N(\mu, \sigma)$ with $\mu \neq 0$ and $\sigma \neq 1$. When we apply cognitive questionnaires to that sample, they are going to reflect the parameters of the sample, not the population, and that's where the bias comes from. This bias may be small if we retrieve a large enough sample, but it will still contain a systematic difference which can be elimiated by a better simulation setup. If we are to obtain proper $\hat\beta$, we must sample directly from the population on every replication. This is what our second setup does.
+
+# Simulation setup 2
+
+In this scenario, our infinite population is sampled once and that same sample is administered both one background questionnaire and one cognitive questionnaire. Then, $\hat\beta$ is calculated for this sample. Next, another sample is obtained from the population and one of each type of questionnaire is administered to it. The figure below shows a visual representation of this setup.
+
+![](figure/ex2.jpg)
+
+```{r gendat1setup, echo = FALSE}
+path <- "C:\\Users\\lindaliaw\\Google Drive\\FINNUT Research\\R Package Development\\testing_v5\\data\\gendat1"
+tt <- 1; load(file = paste0(path, "\\test", tt, ".RData")); test1 <- test
+tt <- 4; load(file = paste0(path, "\\test", tt, ".RData")); test4 <- test
+```
+
+```{r gendat1test1, echo = FALSE}
+test <- test1
+desc1_mean <- apply(test[[8]][ c(2: (2+test[[1]]$X ))], 2, mean)
+desc2_sd <- apply(test[[8]][ (2+test[[1]]$X + 1 ): (2+test[[1]]$X*2 + 1) ], 2, mean)
+desc <- data.frame(names(test[[3]]$betas[1: (1 + test[[1]]$X)] ), round(desc1_mean, 4), round(desc2_sd, 4))
+desc <- cbind(test[[1]]$N, desc)
+colnames(desc) <- c("N", "Variable", "Mean",  "SD"); row.names(desc) <- NULL
+desc_t1 <- desc
+```
+
+```{r gendat1test4, echo = FALSE}
+test <- test4
+desc1_mean <- apply(test[[8]][ c(2: (2+test[[1]]$X ))], 2, mean)
+desc2_sd <- apply(test[[8]][ (2+test[[1]]$X + 1 ): (2+test[[1]]$X*2 + 1) ], 2, mean)
+desc <- data.frame(names(test[[3]]$betas[1: (1 + test[[1]]$X)] ), round(desc1_mean, 4), round(desc2_sd, 4))
+desc <- cbind(test[[1]]$N, desc)
+colnames(desc) <- c("N", "Variable", "Mean",  "SD"); row.names(desc) <- NULL
+desc_t4 <- desc
+```
+
+The difference between the two setups seems small, but the results are definitely affected. First, we look at some summary statistics for the new $\hat\beta$. They are quite different from the ones from the first setup, which is already an indicator that the two setups yield different results.
+
+```{r gendat1Summaries, echo = FALSE, warning = F}
+knitr::kable(desc_t1, format="html", booktabs = T, escape = F,
+             align=c(rep('c',times = ncol(desc)))) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+knitr::kable(desc_t4, format="html", booktabs = T, escape = F,
+             align=c(rep('c',times = ncol(desc)))) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+
+```
+
+Then we plot the estimated coefficients for each replication, and the differences are much clearer, with a defintive improvement of our results. The systematic bias that was seen before is gone, and $\hat\beta$ converges to $\beta$ even for the smaller sample size.
+
+```{r fig2, echo = FALSE, dpi=300, fig.height = 6, fig.width = 20}
+dat <- list(test1, test4)
+par(mfrow=c(1,2))
+
+for ( pp in 1 : 3) {
+  for ( dd in 1:2) {
+    test <- dat[[dd]]
+    true_beta <- test[[3]]$betas[[pp]]
+    ## results from TAM
+    plot ( x = 1: test[[1]]$reps, y = test[[5]][, pp],
+           ylim = c(true_beta - .3, true_beta + .3),
+           xlab = "replication", ylab = "estimated coef",
+           main = paste0("TAM:", names(test[[3]]$betas)[pp], "- N = ", test[[1]]$N),
+           pch = 20, cex.lab = 2, cex.main = 2, cex.axis = 2)
+    abline( h = true_beta, col = "red", lwd = 3)
+  }
+}
+```
+
+Finally, the tables below complement the figures above with some summary statistics, showing similar numbers from the first setup. Once again, the tables suggest that everything is in order, which means that the improvements were most noticeable in the figures.
+
+```{r gendat1recovery1, echo = FALSE}
+test <- test1
+res <- cbind( test[[1]]$N, test[[7]][,1], round(test[[7]][,2:7], 5))
+colnames(res) <- c("N", "Variable", "True beta", "Est beta", "SD", "Bias", "ASB", "RMSE")
+row.names(res) <- NULL
+knitr::kable(res, format="html", booktabs = T, escape = F,
+             align=c(rep('c',times = ncol(res)))) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+```{r gendat1recovery4, echo = FALSE}
+test <- test4
+res <- cbind( test[[1]]$N, test[[7]][,1], round(test[[7]][,2:7], 5))
+colnames(res) <- c("N", "Variable", "True beta", "Est beta", "SD", "Bias", "ASB", "RMSE")
+row.names(res) <- NULL
+knitr::kable(res, format="html", booktabs = T, escape = F,
+             align=c(rep('c',times = ncol(res)))) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+# Conclusion
+
+We live in an era where computing power allows us to run multiple simulation studies in a matter of minutes, something unthinkable just a couple of decades ago. This does not mean, however, that any estimation problem can be overcome with computational brute force. Careful design is necessary to make sure the data is generated from an adequate source; we have showed here one example of how one small decision can impact the final results in a relevant but hardly-noticeable manner.
+
+A secondary but also very important conclusion we can draw here is the importance of incorporating numeric and visual inspection protocols into a scientist's routine. The final tables in the two simulation setups presented similar values, and one would be excused for assuming neither setup contains bias just by looking at them. However, the figures show that one of those setups introduces an important---albeit small---and systematic bias into our estimates.
